@@ -5,6 +5,7 @@
 #include <regex>
 #include <boost/asio.hpp>
 #include <boost/beast.hpp>
+#include <boost/beast/ssl.hpp>
 #include <utility>
 #include <vector>
 #include <functional>
@@ -16,6 +17,7 @@ class HTTPServer {
 public:
 
     class Session;
+    friend class Session;
 
     class Route {
 
@@ -154,9 +156,9 @@ public:
                                      _response.keep_alive(false);
 
                                      http::async_write(_socket, _response,
-                                                       [self](boost::beast::error_code ec, std::size_t) {
-                                                           self->_socket.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
-                                                       });
+                                        [self](boost::beast::error_code ec, std::size_t) {
+                                           self->_socket.shutdown(asio::ip::tcp::socket::shutdown_send, ec);
+                                        });
 
                                  } else {
 
@@ -173,9 +175,10 @@ public:
     };
 
 public:
-    explicit HTTPServer(asio::io_service& io, unsigned short port)
-            : _acceptor(io, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), port)),
-              _socket(io) {
+    explicit HTTPServer(asio::io_service& io, unsigned short port, std::shared_ptr<asio::ssl::context> ssl = nullptr)
+            : _acceptor{io, asio::ip::tcp::endpoint{asio::ip::tcp::v4(), port}},
+              _socket{io},
+              _ssl{std::move(ssl)} {
 
         _accept();
     }
@@ -195,6 +198,7 @@ private:
     asio::ip::tcp::acceptor _acceptor;
     asio::ip::tcp::socket _socket;
     std::vector<Route> _routes;
+    std::shared_ptr<asio::ssl::context> _ssl;
 };
 
 #endif

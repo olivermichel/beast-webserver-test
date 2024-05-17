@@ -4,18 +4,42 @@
 
 #include "http_server.h"
 
+static std::string read_file(const std::string& file_name) {
+
+    std::ifstream file{file_name};
+
+    if (!file.is_open())
+        throw std::runtime_error{"read_file: failed to open " + file_name};
+
+    return std::string{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+}
+
 int main() {
 
     inja::Environment inja;
     asio::io_service io{};
-    HTTPServer server{io, 8080};
+
+    auto cert = read_file("cert.pem");
+    auto key = read_file("key.pem");
+
+    auto ssl = std::make_shared<asio::ssl::context>(asio::ssl::context::tlsv12);
+
+    ssl->set_options(
+            boost::asio::ssl::context::default_workarounds |
+            boost::asio::ssl::context::no_sslv2 |
+            boost::asio::ssl::context::single_dh_use);
+
+    ssl->use_certificate_chain(boost::asio::buffer(cert.data(), cert.size()));
+
+    ssl->use_private_key(boost::asio::buffer(key.data(), key.size()),
+                        boost::asio::ssl::context::file_format::pem);
+
+
+    HTTPServer server{io, 8080, ssl};
 
     server.add_route("/test.js", [](auto& session) {
 
-        std::ifstream file("test.js");
-
-        boost::beast::ostream(session.response().body())
-            << std::string{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
+        boost::beast::ostream(session.response().body()) << read_file("test.js");
         session.response().content_length(session.response().body().size());
     });
 
