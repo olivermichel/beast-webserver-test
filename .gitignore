@@ -1,0 +1,4 @@
+cmake-build-*
+vendor/
+*.pem
+.idea
