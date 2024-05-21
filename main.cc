@@ -42,7 +42,6 @@ int main() {
         return -1;
     }
 
-
     HTTPServer server{io, 8080, ssl};
 
     server.add_route(HTTPServer::Method::GET, "/test.js", [](auto& session) {

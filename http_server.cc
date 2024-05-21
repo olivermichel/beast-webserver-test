@@ -133,6 +133,8 @@ HTTPServer::HTTPServer(asio::io_service& io, unsigned short port, asio::ssl::con
       _ssl{ssl} {
 
     _accept();
+
+    std::cout << "HTTPServer: listening on port " << port << std::endl;
 }
 
 void HTTPServer::add_route(Method method, const std::string& pattern,
