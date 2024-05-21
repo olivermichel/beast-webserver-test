@@ -16,6 +16,14 @@ using namespace boost::beast;
 class HTTPServer {
 public:
 
+    enum class Method {
+        GET,
+        POST,
+        PUT,
+        DELETE
+    };
+
+
     struct ParsedURL {
 
         ParsedURL() = default;
@@ -77,16 +85,24 @@ public:
 
     class Route {
 
+
+
         friend class HTTPServer;
 
     public:
 
         using Handler = std::function<void(HTTPServer::Session&)>;
 
-        explicit Route(std::string pattern, Handler handler)
-                : _pattern(std::move(pattern)),
+        explicit Route(Method method, std::string pattern, Handler handler)
+                : _method(method),
+                  _pattern(std::move(pattern)),
                   _regex(_pattern),
-                  _handler(std::move(handler)) { }
+                  _handler(std::move(handler)) {
+
+            if (_method != Method::GET) {
+                throw std::domain_error("Route: unsupported method");
+            }
+        }
 
         [[nodiscard]] std::pair<bool, std::smatch> match(const std::string& target) const {
             std::smatch match;
@@ -95,6 +111,7 @@ public:
         }
 
     private:
+        Method _method;
         std::string _pattern;
         std::regex _regex;
         std::function<void(HTTPServer::Session&)> _handler;
@@ -182,6 +199,8 @@ public:
     };
 
 public:
+
+
     explicit HTTPServer(asio::io_service& io, unsigned short port, asio::ssl::context& ssl)
             : _acceptor{io, asio::ip::tcp::endpoint{asio::ip::tcp::v4(), port}},
               _socket{io},
@@ -190,8 +209,8 @@ public:
         _accept();
     }
 
-    void add_route(const std::string& pattern, const Route::Handler& handler) {
-        _routes.emplace_back(pattern, handler);
+    void add_route(Method method, const std::string& pattern, const Route::Handler& handler) {
+        _routes.emplace_back(method, pattern, handler);
     }
 
 private:

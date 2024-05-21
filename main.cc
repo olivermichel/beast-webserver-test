@@ -45,13 +45,13 @@ int main() {
 
     HTTPServer server{io, 8080, ssl};
 
-    server.add_route("/test.js", [](auto& session) {
+    server.add_route(HTTPServer::Method::GET, "/test.js", [](auto& session) {
 
         boost::beast::ostream(session.response().body()) << read_file("test.js");
         session.response().content_length(session.response().body().size());
     });
 
-    server.add_route("/hello/(\\w+)", [&inja](auto& session) {
+    server.add_route(HTTPServer::Method::GET, "/hello/(\\w+)", [&inja](auto& session) {
 
         boost::beast::ostream(session.response().body()) << inja.render_file("page.html", {
             { "name", session.url().path_params[0] },
