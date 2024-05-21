@@ -19,20 +19,28 @@ int main() {
     inja::Environment inja;
     asio::io_service io{};
 
-    auto cert = read_file("cert.pem");
-    auto key = read_file("key.pem");
+    asio::ssl::context ssl{asio::ssl::context::tlsv12};
 
-    auto ssl = std::make_shared<asio::ssl::context>(asio::ssl::context::tlsv12);
-
-    ssl->set_options(
+    ssl.set_options(
             boost::asio::ssl::context::default_workarounds |
             boost::asio::ssl::context::no_sslv2 |
             boost::asio::ssl::context::single_dh_use);
 
-    ssl->use_certificate_chain(boost::asio::buffer(cert.data(), cert.size()));
+    boost::system::error_code ec;
 
-    ssl->use_private_key(boost::asio::buffer(key.data(), key.size()),
-                        boost::asio::ssl::context::file_format::pem);
+    ssl.use_certificate_chain_file("cert.pem", ec);
+
+    if (ec) {
+        std::cerr << "use_certificate_chain_file: failed: " << ec.message() << std::endl;
+        return -1;
+    }
+
+    ssl.use_private_key_file("key.pem", boost::asio::ssl::context::file_format::pem, ec);
+
+    if (ec) {
+        std::cerr << "use_private_key_file: failed: " << ec.message() << std::endl;
+        return -1;
+    }
 
 
     HTTPServer server{io, 8080, ssl};
