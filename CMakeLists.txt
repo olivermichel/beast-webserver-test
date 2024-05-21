@@ -47,7 +47,7 @@ if (NOT EXISTS ${CMAKE_HOME_DIRECTORY}/vendor/inja/inja.h)
     message(STATUS "Downloading Inja: /vendor/inja/inja.h - done")
 endif ()
 
-add_executable(beast_webserver_test main.cc)
+add_executable(beast_webserver_test main.cc http_server.h http_server.cc)
 
 target_include_directories(beast_webserver_test PRIVATE ${CMAKE_HOME_DIRECTORY}/vendor)
 target_include_directories(beast_webserver_test PRIVATE  ${Boost_INCLUDE_DIRS})
