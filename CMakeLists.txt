@@ -47,7 +47,7 @@ if (NOT EXISTS ${CMAKE_HOME_DIRECTORY}/vendor/inja/inja.h)
     message(STATUS "Downloading Inja: /vendor/inja/inja.h - done")
 endif ()
 
-add_executable(advanced_server advanced_server.cc old/http_server.h old/http_server.cc)
+add_executable(advanced_server advanced_server.cc)
 
 target_include_directories(advanced_server PRIVATE ${CMAKE_HOME_DIRECTORY}/vendor)
 target_include_directories(advanced_server PRIVATE  ${Boost_INCLUDE_DIRS})

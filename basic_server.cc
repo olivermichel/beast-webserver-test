@@ -12,9 +12,9 @@ asio::ssl::context initialize_ssl(const std::string& cert_file, const std::strin
 
     asio::ssl::context ssl{asio::ssl::context::tlsv12};
 
-    ssl.set_options(boost::asio::ssl::context::default_workarounds |
-                    boost::asio::ssl::context::no_sslv2 |
-                    boost::asio::ssl::context::single_dh_use);
+    ssl.set_options(asio::ssl::context::default_workarounds |
+                    asio::ssl::context::no_sslv2 |
+                    asio::ssl::context::single_dh_use);
 
     boost::system::error_code ec;
 
@@ -92,7 +92,7 @@ public:
 
             // serve a file:
 
-            const std::string DOC_ROOT = ".";
+            const std::string DOC_ROOT = "./doc_root";
             auto filePath = DOC_ROOT + std::string{_request.target()};
 
             if (std::filesystem::exists(filePath)) {

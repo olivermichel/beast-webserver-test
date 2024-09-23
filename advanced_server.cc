@@ -1,8 +1,12 @@
 
 #include <inja/inja.hpp>
 #include <nlohmann/json.hpp>
+#include <boost/asio.hpp>
+#include <boost/asio/ssl.hpp>
+#include <boost/beast.hpp>
 
-#include "old/http_server.h"
+using namespace boost;
+using namespace boost::beast;
 
 static std::string read_file(const std::string& file_name) {
 
@@ -18,9 +22,9 @@ asio::ssl::context initialize_ssl(const std::string& cert_file, const std::strin
 
     asio::ssl::context ssl{asio::ssl::context::tlsv12};
 
-    ssl.set_options(boost::asio::ssl::context::default_workarounds |
-                    boost::asio::ssl::context::no_sslv2 |
-                    boost::asio::ssl::context::single_dh_use);
+    ssl.set_options(asio::ssl::context::default_workarounds |
+                    asio::ssl::context::no_sslv2 |
+                    asio::ssl::context::single_dh_use);
 
     boost::system::error_code ec;
 
@@ -39,6 +43,155 @@ asio::ssl::context initialize_ssl(const std::string& cert_file, const std::strin
     return ssl;
 }
 
+class HTTPServer {
+
+public:
+    explicit HTTPServer(asio::io_service& io, unsigned short port, asio::ssl::context& ssl)
+        : _acceptor{io, asio::ip::tcp::endpoint{asio::ip::tcp::v4(), port}},
+          _socket{io},
+          _ssl{ssl} {
+
+        _accept();
+    }
+
+    void serveDirectory(const std::string& docRoot) {
+        _docRoot = docRoot;
+    }
+
+    class Session : public std::enable_shared_from_this<Session> {
+    public:
+        explicit Session(HTTPServer& server, asio::ip::tcp::socket socket, asio::ssl::context& ssl)
+                : _server{server},
+                  _stream{std::move(socket), ssl} { }
+
+        void start() {
+            _stream.async_handshake(asio::ssl::stream_base::server,
+                [this, self = shared_from_this()](boost::beast::error_code ec) {
+
+                if (!ec) {
+                    self->_read();
+                }
+            });
+        }
+
+    private:
+
+        void _read() {
+
+            http::async_read(_stream, _read_buf, _request,
+                [this, self = this->shared_from_this()]
+                (boost::system::error_code ec, std::size_t len) {
+
+                _handleRequest();
+            });
+        }
+
+        void _handleRequest() {
+
+            std::cout << "_handleRequest(): " << _request.method_string() << " "
+                      << _request.target() << std::endl;
+
+            boost::beast::error_code ec;
+
+            if (_server._docRoot) {
+
+                auto filePath = _server._docRoot.value() + std::string{_request.target()};
+
+                if (std::filesystem::exists(filePath)) {
+
+                    beast::http::file_body::value_type body;
+
+                    body.open(filePath.c_str(), beast::file_mode::scan, ec);
+
+                    if (ec) {
+                        std::cerr << "failed opening " << filePath << ": " << ec.what() << std::endl;
+                        return;
+                    }
+
+                    http::response<http::file_body> response{
+                            std::piecewise_construct,
+                            std::make_tuple(std::move(body)),
+                            std::make_tuple(http::status::ok, _request.version())};
+
+                    response.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+                    http::write(_stream, response, ec);
+
+                    if (ec) {
+                        std::cerr << ec.what() << std::endl;
+                    }
+
+                    return;
+                }
+            }
+
+
+
+
+
+
+//                else {
+//                    http::response<http::string_body> response{http::status::not_found, _request.version()};
+//                    response.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+//                    response.set(http::field::content_type, "text/html");
+//                    response.keep_alive(_request.keep_alive());
+//                    response.body() = "file not found";
+//                    response.prepare_payload();
+//                    http::write(_stream, response, ec);
+//                }
+
+
+
+
+
+
+
+
+
+
+
+
+
+            // serve a file:
+
+
+
+
+
+            // serve text:
+            /*
+            http::response<http::string_body> response{http::status::ok, _request.version()};
+            response.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+            response.set(http::field::content_type, "text/html");
+            response.keep_alive(_request.keep_alive());
+            response.body() = "hello";
+            response.prepare_payload();
+            http::write(_stream, response, ec);
+            */
+        }
+
+        HTTPServer& _server;
+        asio::ssl::stream<asio::ip::tcp::socket> _stream;
+        beast::flat_buffer _read_buf;
+        http::request<http::dynamic_body> _request;
+    };
+
+    friend class HTTPServer;
+
+private:
+    void _accept() {
+
+        _acceptor.async_accept(_socket, [this](std::error_code ec) {
+            std::make_shared<Session>(*this, std::move(_socket), _ssl)->start();
+            _accept();
+        });
+    }
+
+    asio::ip::tcp::acceptor _acceptor;
+    asio::ip::tcp::socket _socket;
+    asio::ssl::context& _ssl;
+    std::optional<std::string> _docRoot;
+};
+
 int main() {
 
     inja::Environment inja;
@@ -47,73 +200,7 @@ int main() {
     auto ssl = initialize_ssl("cert.pem", "key.pem");
 
     HTTPServer server{io, 8081, ssl};
-    server.serve_directory(".");
-
-    /*
-    server.add_route(HTTPServer::Method::GET, "/test.js", [](auto& s) {
-
-//        beast::http::file_body::value_type body;
-//        std::string doc_root = ".";
-
-
-
-        std::string path = doc_root + s.url().path;
-
-        std::cout << path << std::endl;
-
-        beast::error_code ec;
-//
-        if (ec == beast::errc::no_such_file_or_directory) {
-            s.response().result(beast::http::status::not_found);
-            return;
-        }
-
-        if(ec) {
-            s.response().result(beast::http::status::internal_server_error);
-            return;
-        }
-//            return not_found(req.target());
-
-        body.open(path.c_str(), beast::file_mode::scan, ec);
-
-        http::response<http::file_body> res{
-            std::piecewise_construct,
-            std::make_tuple(std::move(body)),
-            std::make_tuple(http::status::ok, s.request().version())};
-
-
-//        http::response<http::dynamic_body>& res = s.response();
-//        res.body() = "test";
-//        res.
-
-//
-//        std::cout << s.request().target() << std::endl;
-
-//        s.response() = std::move(res);
-
-//        boost::beast::ostream(s.response().body()) << read_file("test.js");
-//        s.response().content_length(s.response().body().size());
-
-    });
-    */
-
-    server.add_route(HTTPServer::Method::GET, "/hello/(\\w+)", [&inja](auto& s) {
-
-        std::cout << "hello route" << std::endl;
-
-        http::response<http::string_body> res{http::status::ok, s.request().version()};
-        res.body() = "Hello" + s.url().path_params[0];
-        res.set(http::field::content_type, "text/html");
-        res.prepare_payload();
-        s._send_response(std::move(res));
-
-        /*
-        boost::beast::ostream(session.response().body()) << inja.render_file("page.html", {
-            { "name", session.url().path_params[0] },
-            { "time", std::time(nullptr) }});
-        session.response().content_length(session.response().body().size());
-        */
-    });
+    server.serveDirectory("doc_root");
 
     io.run();
 
