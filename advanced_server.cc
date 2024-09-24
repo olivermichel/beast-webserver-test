@@ -5,9 +5,13 @@
 #include <boost/asio/ssl.hpp>
 #include <boost/beast.hpp>
 
+#include <iostream>
+#include <filesystem>
+
 using namespace boost;
 using namespace boost::beast;
 
+/*
 static std::string read_file(const std::string& file_name) {
 
     std::ifstream file{file_name};
@@ -17,6 +21,7 @@ static std::string read_file(const std::string& file_name) {
 
     return std::string{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
 }
+*/
 
 asio::ssl::context initialize_ssl(const std::string& cert_file, const std::string& key_file) {
 
@@ -45,7 +50,101 @@ asio::ssl::context initialize_ssl(const std::string& cert_file, const std::strin
 
 class HTTPServer {
 
+    //TODO: add routes
+
 public:
+
+    class Target {
+
+    public:
+
+        explicit Target(const std::string& target) {
+            _parseURL(target);
+        }
+
+        [[nodiscard]] const std::string& path() const {
+            return _path;
+        }
+
+        [[nodiscard]] const std::string& fileExtension() const {
+            return _fileExtension;
+        }
+
+        [[nodiscard]] const std::map<std::string, std::string>& params() const {
+            return _params;
+        }
+
+    private:
+
+        static std::string _decodeURL(const std::string& str) {
+
+            std::string decoded;
+            char ch;
+            int i, ii;
+
+            for (i = 0; i < str.length(); i++) {
+
+                if (str[i] == '%') {
+
+                    sscanf(str.substr(i + 1, 2).c_str(), "%x", &ii);
+
+                    ch = static_cast<char>(ii);
+                    decoded += ch;
+                    i = i + 2;
+                } else if (str[i] == '+') {
+                    decoded += ' ';
+                } else {
+                    decoded += str[i];
+                }
+            }
+
+            return decoded;
+        }
+
+        void _parseURL(const std::string &url) {
+
+            std::map<std::string, std::string> params;
+            std::string path, file_extension;
+
+            // Find the position of the query part (`?`)
+            std::string::size_type pos = url.find('?');
+            std::string path_and_file = (pos == std::string::npos) ? url : url.substr(0, pos);
+            std::string query = (pos == std::string::npos) ? "" : url.substr(pos + 1);
+
+            // Extract file extension, if any, from the path
+            std::string::size_type ext_pos = path_and_file.rfind('.');
+
+            if (ext_pos != std::string::npos && ext_pos > path_and_file.rfind('/')) {
+                _fileExtension = path_and_file.substr(ext_pos + 1);
+            }
+
+            _path = path_and_file;
+
+            // Split the query string into key-value pairs
+            std::istringstream query_stream(query);
+            std::string pair;
+
+            while (std::getline(query_stream, pair, '&')) {
+
+                std::string::size_type equals_pos = pair.find('=');
+
+                if (equals_pos != std::string::npos) {
+                    std::string key = _decodeURL(pair.substr(0, equals_pos));
+                    std::string value = _decodeURL(pair.substr(equals_pos + 1));
+                    _params[key] = value;
+                } else {
+                    // Handle case where there's a key with no value
+                    std::string key = _decodeURL(pair);
+                    _params[key] = "";
+                }
+            }
+        }
+
+        std::string _path;
+        std::string _fileExtension;
+        std::map<std::string, std::string> _params;
+    };
+
     explicit HTTPServer(asio::io_service& io, unsigned short port, asio::ssl::context& ssl)
         : _acceptor{io, asio::ip::tcp::endpoint{asio::ip::tcp::v4(), port}},
           _socket{io},
@@ -61,8 +160,8 @@ public:
     class Session : public std::enable_shared_from_this<Session> {
     public:
         explicit Session(HTTPServer& server, asio::ip::tcp::socket socket, asio::ssl::context& ssl)
-                : _server{server},
-                  _stream{std::move(socket), ssl} { }
+            : _server{server},
+              _stream{std::move(socket), ssl} { }
 
         void start() {
             _stream.async_handshake(asio::ssl::stream_base::server,
@@ -88,6 +187,8 @@ public:
 
         void _handleRequest() {
 
+            Target target{std::string{_request.target()}};
+
             std::cout << "_handleRequest(): " << _request.method_string() << " "
                       << _request.target() << std::endl;
 
@@ -95,7 +196,7 @@ public:
 
             if (_server._docRoot) {
 
-                auto filePath = _server._docRoot.value() + std::string{_request.target()};
+                auto filePath = _server._docRoot.value() + target.path();
 
                 if (std::filesystem::exists(filePath)) {
 
@@ -109,9 +210,8 @@ public:
                     }
 
                     http::response<http::file_body> response{
-                            std::piecewise_construct,
-                            std::make_tuple(std::move(body)),
-                            std::make_tuple(http::status::ok, _request.version())};
+                        std::piecewise_construct, std::make_tuple(std::move(body)),
+                        std::make_tuple(http::status::ok, _request.version())};
 
                     response.set(http::field::server, BOOST_BEAST_VERSION_STRING);
                     http::write(_stream, response, ec);
@@ -124,11 +224,6 @@ public:
                 }
             }
 
-
-
-
-
-
 //                else {
 //                    http::response<http::string_body> response{http::status::not_found, _request.version()};
 //                    response.set(http::field::server, BOOST_BEAST_VERSION_STRING);
@@ -140,22 +235,7 @@ public:
 //                }
 
 
-
-
-
-
-
-
-
-
-
-
-
             // serve a file:
-
-
-
-
 
             // serve text:
             /*
@@ -178,8 +258,8 @@ public:
     friend class HTTPServer;
 
 private:
-    void _accept() {
 
+    void _accept() {
         _acceptor.async_accept(_socket, [this](std::error_code ec) {
             std::make_shared<Session>(*this, std::move(_socket), _ssl)->start();
             _accept();
@@ -198,6 +278,13 @@ int main() {
     asio::io_service io{};
 
     auto ssl = initialize_ssl("cert.pem", "key.pem");
+
+//    HTTPServer::Target target{"/hello.js?name=world"};
+//    std::cout << target.path() << std::endl;
+//    std::cout << target.fileExtension() << std::endl;
+//    for (const auto& [key, value] : target.params()) {
+//        std::cout << key << " = " << value << std::endl;
+//    }
 
     HTTPServer server{io, 8081, ssl};
     server.serveDirectory("doc_root");
