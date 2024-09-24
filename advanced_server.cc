@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <filesystem>
+#include <utility>
 
 using namespace boost;
 using namespace boost::beast;
@@ -49,8 +50,6 @@ asio::ssl::context initialize_ssl(const std::string& cert_file, const std::strin
 }
 
 class HTTPServer {
-
-    //TODO: add routes
 
 public:
 
@@ -173,6 +172,14 @@ public:
             });
         }
 
+        const http::request<http::dynamic_body>& request() const {
+            return _request;
+        }
+
+       asio::ssl::stream<asio::ip::tcp::socket>& stream() {
+            return _stream;
+       }
+
     private:
 
         void _read() {
@@ -189,8 +196,10 @@ public:
 
             Target target{std::string{_request.target()}};
 
+            /*
             std::cout << "_handleRequest(): " << _request.method_string() << " "
                       << _request.target() << std::endl;
+            */
 
             boost::beast::error_code ec;
 
@@ -199,6 +208,16 @@ public:
                 auto filePath = _server._docRoot.value() + target.path();
 
                 if (std::filesystem::exists(filePath)) {
+
+                    if (std::filesystem::is_directory(filePath)) {
+
+                        if (std::filesystem::exists(filePath + "/index.html")) {
+                            filePath += "/index.html";
+                        } else {
+                            _returnNotFound();
+                            return;
+                        }
+                    }
 
                     beast::http::file_body::value_type body;
 
@@ -224,29 +243,24 @@ public:
                 }
             }
 
-//                else {
-//                    http::response<http::string_body> response{http::status::not_found, _request.version()};
-//                    response.set(http::field::server, BOOST_BEAST_VERSION_STRING);
-//                    response.set(http::field::content_type, "text/html");
-//                    response.keep_alive(_request.keep_alive());
-//                    response.body() = "file not found";
-//                    response.prepare_payload();
-//                    http::write(_stream, response, ec);
-//                }
+            if (_server._routes.find(target.path()) != _server._routes.end()) {
 
+                _server._routes[target.path()](*this);
+                return;
+            }
 
-            // serve a file:
+            _returnNotFound();
+        }
 
-            // serve text:
-            /*
-            http::response<http::string_body> response{http::status::ok, _request.version()};
+        void _returnNotFound() {
+
+            http::response<http::string_body> response{http::status::not_found, _request.version()};
             response.set(http::field::server, BOOST_BEAST_VERSION_STRING);
             response.set(http::field::content_type, "text/html");
             response.keep_alive(_request.keep_alive());
-            response.body() = "hello";
+            response.body() = "file not found";
             response.prepare_payload();
-            http::write(_stream, response, ec);
-            */
+            http::write(_stream, response);
         }
 
         HTTPServer& _server;
@@ -254,6 +268,11 @@ public:
         beast::flat_buffer _read_buf;
         http::request<http::dynamic_body> _request;
     };
+
+    void addRoute(const std::string& path, std::function<void (Session&)> handler) {
+
+        _routes[path] = std::move(handler);
+    }
 
     friend class HTTPServer;
 
@@ -270,6 +289,7 @@ private:
     asio::ip::tcp::socket _socket;
     asio::ssl::context& _ssl;
     std::optional<std::string> _docRoot;
+    std::unordered_map<std::string, std::function<void(Session&)>> _routes;
 };
 
 int main() {
@@ -279,15 +299,19 @@ int main() {
 
     auto ssl = initialize_ssl("cert.pem", "key.pem");
 
-//    HTTPServer::Target target{"/hello.js?name=world"};
-//    std::cout << target.path() << std::endl;
-//    std::cout << target.fileExtension() << std::endl;
-//    for (const auto& [key, value] : target.params()) {
-//        std::cout << key << " = " << value << std::endl;
-//    }
-
     HTTPServer server{io, 8081, ssl};
+
     server.serveDirectory("doc_root");
+
+    server.addRoute("/test", [](HTTPServer::Session& session) {
+        http::response<http::string_body> response{http::status::ok, session.request().version()};
+        response.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+        response.set(http::field::content_type, "text/html");
+        response.keep_alive(session.request().keep_alive());
+        response.body() = "hello test";
+        response.prepare_payload();
+        http::write(session.stream(), response);
+    });
 
     io.run();
 
