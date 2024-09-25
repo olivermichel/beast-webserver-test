@@ -12,19 +12,17 @@
 using namespace boost;
 using namespace boost::beast;
 
-/*
-static std::string read_file(const std::string& file_name) {
+static std::string readFileToString(const std::string& fileName) {
 
-    std::ifstream file{file_name};
+    std::ifstream file{fileName};
 
     if (!file.is_open())
-        throw std::runtime_error{"read_file: failed to open " + file_name};
+        throw std::runtime_error{"readFileToString: failed to open " + fileName};
 
     return std::string{std::istreambuf_iterator<char>{file}, std::istreambuf_iterator<char>{}};
 }
-*/
 
-asio::ssl::context initialize_ssl(const std::string& cert_file, const std::string& key_file) {
+asio::ssl::context initializeSsl(const std::string& certFile, const std::string& keyFile) {
 
     asio::ssl::context ssl{asio::ssl::context::tlsv12};
 
@@ -34,13 +32,13 @@ asio::ssl::context initialize_ssl(const std::string& cert_file, const std::strin
 
     boost::system::error_code ec;
 
-    ec = ssl.use_certificate_chain_file(cert_file, ec);
+    ec = ssl.use_certificate_chain_file(certFile, ec);
 
     if (ec) {
         throw std::runtime_error{"use_certificate_chain_file: failed: " + ec.message()};
     }
 
-    ec = ssl.use_private_key_file(key_file, boost::asio::ssl::context::file_format::pem, ec);
+    ec = ssl.use_private_key_file(keyFile, boost::asio::ssl::context::file_format::pem, ec);
 
     if (ec) {
         throw std::runtime_error{"use_private_key_file: failed: " + ec.message()};
@@ -52,6 +50,11 @@ asio::ssl::context initialize_ssl(const std::string& cert_file, const std::strin
 class HTTPServer {
 
 public:
+
+    class Target;
+    class Session;
+
+    typedef std::function<void(Session&, const HTTPServer::Target&)> HandlerFx;
 
     class Target {
 
@@ -79,14 +82,12 @@ public:
 
             std::string decoded;
             char ch;
-            int i, ii;
+            unsigned int i, ii;
 
             for (i = 0; i < str.length(); i++) {
 
                 if (str[i] == '%') {
-
-                    sscanf(str.substr(i + 1, 2).c_str(), "%x", &ii);
-
+                    ii = std::strtoul(str.substr(i + 1, 2).c_str(), nullptr, 16);
                     ch = static_cast<char>(ii);
                     decoded += ch;
                     i = i + 2;
@@ -196,11 +197,6 @@ public:
 
             Target target{std::string{_request.target()}};
 
-            /*
-            std::cout << "_handleRequest(): " << _request.method_string() << " "
-                      << _request.target() << std::endl;
-            */
-
             boost::beast::error_code ec;
 
             if (_server._docRoot) {
@@ -214,7 +210,7 @@ public:
                         if (std::filesystem::exists(filePath + "/index.html")) {
                             filePath += "/index.html";
                         } else {
-                            _returnNotFound();
+                            _returnStatus(http::status::not_found);
                             return;
                         }
                     }
@@ -224,7 +220,7 @@ public:
                     body.open(filePath.c_str(), beast::file_mode::scan, ec);
 
                     if (ec) {
-                        std::cerr << "failed opening " << filePath << ": " << ec.what() << std::endl;
+                        _returnStatus(http::status::internal_server_error);
                         return;
                     }
 
@@ -236,7 +232,7 @@ public:
                     http::write(_stream, response, ec);
 
                     if (ec) {
-                        std::cerr << ec.what() << std::endl;
+                        _returnStatus(http::status::internal_server_error);
                     }
 
                     return;
@@ -245,20 +241,35 @@ public:
 
             if (_server._routes.find(target.path()) != _server._routes.end()) {
 
-                _server._routes[target.path()](*this);
+                _server._routes[target.path()](*this, target);
                 return;
             }
 
-            _returnNotFound();
+            _returnStatus(http::status::not_found);
         }
 
-        void _returnNotFound() {
+        void _returnStatus(http::status status) {
 
-            http::response<http::string_body> response{http::status::not_found, _request.version()};
+            http::response<http::string_body> response{status, _request.version()};
             response.set(http::field::server, BOOST_BEAST_VERSION_STRING);
             response.set(http::field::content_type, "text/html");
             response.keep_alive(_request.keep_alive());
-            response.body() = "file not found";
+
+            switch (status) {
+                case http::status::ok:
+                    response.body() = "200 OK";
+                    break;
+                case http::status::not_found:
+                    response.body() = "404 Not Found";
+                    break;
+                case http::status::internal_server_error:
+                    response.body() = "500 Internal Server Error";
+                    break;
+                default:
+                    response.body() = "Unknown status";
+                    break;
+            }
+
             response.prepare_payload();
             http::write(_stream, response);
         }
@@ -269,7 +280,7 @@ public:
         http::request<http::dynamic_body> _request;
     };
 
-    void addRoute(const std::string& path, std::function<void (Session&)> handler) {
+    void addRoute(const std::string& path, HandlerFx handler) {
 
         _routes[path] = std::move(handler);
     }
@@ -289,7 +300,7 @@ private:
     asio::ip::tcp::socket _socket;
     asio::ssl::context& _ssl;
     std::optional<std::string> _docRoot;
-    std::unordered_map<std::string, std::function<void(Session&)>> _routes;
+    std::unordered_map<std::string, HandlerFx> _routes;
 };
 
 int main() {
@@ -297,18 +308,48 @@ int main() {
     inja::Environment inja;
     asio::io_service io{};
 
-    auto ssl = initialize_ssl("cert.pem", "key.pem");
+    auto ssl = initializeSsl("cert.pem", "key.pem");
 
     HTTPServer server{io, 8081, ssl};
 
     server.serveDirectory("doc_root");
 
-    server.addRoute("/test", [](HTTPServer::Session& session) {
+    server.addRoute("/test", [](HTTPServer::Session& session, const HTTPServer::Target& target) {
+
         http::response<http::string_body> response{http::status::ok, session.request().version()};
         response.set(http::field::server, BOOST_BEAST_VERSION_STRING);
         response.set(http::field::content_type, "text/html");
         response.keep_alive(session.request().keep_alive());
         response.body() = "hello test";
+        response.prepare_payload();
+        http::write(session.stream(), response);
+    });
+
+    server.addRoute("/hello", [](HTTPServer::Session& session, const HTTPServer::Target& target) {
+
+        http::response<http::string_body> response{http::status::ok, session.request().version()};
+        response.set(http::field::server, BOOST_BEAST_VERSION_STRING);
+        response.set(http::field::content_type, "text/html");
+        response.keep_alive(session.request().keep_alive());
+
+        inja::Environment inja;
+        inja::Template tpl = inja.parse(readFileToString("templates/hello.html.inja"));
+
+        std::string name = "World";
+
+        if (target.params().find("name") != target.params().end()) {
+            name = target.params().at("name");
+        }
+
+        std::string currentTime = std::to_string(std::chrono::system_clock::to_time_t(
+                std::chrono::system_clock::now()));
+
+        std::string responseBody = inja.render(tpl, {
+            {"name", name},
+            {"time", currentTime}
+        });
+
+        response.body() = responseBody;
         response.prepare_payload();
         http::write(session.stream(), response);
     });

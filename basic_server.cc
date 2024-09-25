@@ -8,7 +8,7 @@
 using namespace boost;
 using namespace boost::beast;
 
-asio::ssl::context initialize_ssl(const std::string& cert_file, const std::string& key_file) {
+asio::ssl::context initializeSsl(const std::string& cert_file, const std::string& key_file) {
 
     asio::ssl::context ssl{asio::ssl::context::tlsv12};
 
@@ -152,7 +152,7 @@ private:
 
 int main() {
 
-    auto ssl = initialize_ssl("cert.pem", "key.pem");
+    auto ssl = initializeSsl("cert.pem", "key.pem");
 
     asio::io_service io{};
 
